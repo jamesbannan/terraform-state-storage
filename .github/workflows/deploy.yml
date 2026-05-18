@@ -1,0 +1,201 @@
+# Deploys the Terraform state storage account using either the Bicep or the
+# Terraform implementation in this repository.
+#
+# ─── Required repository configuration ─────────────────────────────────────
+#
+# Repository secrets (Settings ▸ Secrets and variables ▸ Actions ▸ Secrets):
+#   AZURE_CLIENT_ID         App registration / managed identity used by OIDC.
+#   AZURE_TENANT_ID         Entra ID tenant ID.
+#   AZURE_SUBSCRIPTION_ID   Target subscription ID.
+#
+# The federated credential on the app registration must trust this repository
+# and either the branch/tag or the environment used by this workflow. Example
+# subject (branch):
+#   repo:<owner>/<repo>:ref:refs/heads/main
+#
+# The service principal needs the following Azure roles on the target
+# subscription:
+#   - Contributor                       (to create the RG and Storage Account)
+#   - User Access Administrator         (to create the role assignment)
+#
+# ─── Notes ─────────────────────────────────────────────────────────────────
+#
+# - The Terraform job uses local state. Re-running it without preserving the
+#   state file will fail because the resources already exist. For ongoing
+#   management, migrate the state into the storage account that this workflow
+#   creates, or use the Bicep job which is natively idempotent.
+
+name: Deploy Terraform state storage
+
+on:
+  workflow_dispatch:
+    inputs:
+      implementation:
+        description: Which IaC implementation to deploy
+        required: true
+        type: choice
+        options:
+          - bicep
+          - terraform
+        default: bicep
+      storage_account_name:
+        description: Globally unique storage account name (3-24 lowercase alphanumeric)
+        required: true
+        type: string
+      location:
+        description: Azure region (e.g. australiaeast)
+        required: true
+        type: string
+        default: australiaeast
+      allowed_ip_address_or_range:
+        description: Optional single IPv4 address or CIDR allowed through the firewall (leave blank to allow none)
+        required: false
+        type: string
+        default: ""
+      blob_data_contributor_object_ids:
+        description: Optional comma-separated list of Entra object IDs to grant Storage Blob Data Contributor (deployer is added automatically)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bicep:
+    if: inputs.implementation == 'bicep'
+    name: Deploy via Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build deployment parameters
+        id: params
+        env:
+          STORAGE_ACCOUNT_NAME: ${{ inputs.storage_account_name }}
+          LOCATION: ${{ inputs.location }}
+          ALLOWED_IP: ${{ inputs.allowed_ip_address_or_range }}
+          EXTRA_OIDS: ${{ inputs.blob_data_contributor_object_ids }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EXTRA_OIDS}" ]; then
+            OIDS_JSON=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | jq -R 'gsub("^[[:space:]]+|[[:space:]]+$"; "")' | jq -s .)
+          else
+            OIDS_JSON='[]'
+          fi
+          jq -n \
+            --arg sa  "${STORAGE_ACCOUNT_NAME}" \
+            --arg loc "${LOCATION}" \
+            --arg ip  "${ALLOWED_IP}" \
+            --argjson oids "${OIDS_JSON}" \
+            '{
+              "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+              "contentVersion": "1.0.0.0",
+              "parameters": {
+                "storageAccountName":            { "value": $sa  },
+                "location":                      { "value": $loc },
+                "allowedIpAddressOrRange":       { "value": $ip  },
+                "blobDataContributorObjectIds":  { "value": $oids }
+              }
+            }' > params.json
+          cat params.json
+
+      - name: Bicep build (lint)
+        run: az bicep build --file bicep/main.bicep
+
+      - name: What-if
+        run: |
+          az deployment sub what-if \
+            --name tfstate-${{ github.run_id }} \
+            --location "${{ inputs.location }}" \
+            --template-file bicep/main.bicep \
+            --parameters @params.json
+
+      - name: Deploy
+        run: |
+          az deployment sub create \
+            --name tfstate-${{ github.run_id }} \
+            --location "${{ inputs.location }}" \
+            --template-file bicep/main.bicep \
+            --parameters @params.json
+
+      - name: Show outputs
+        run: |
+          az deployment sub show \
+            --name tfstate-${{ github.run_id }} \
+            --query properties.outputs \
+            --output json
+
+  terraform:
+    if: inputs.implementation == 'terraform'
+    name: Deploy via Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC:        "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Build tfvars
+        env:
+          STORAGE_ACCOUNT_NAME: ${{ inputs.storage_account_name }}
+          LOCATION: ${{ inputs.location }}
+          ALLOWED_IP: ${{ inputs.allowed_ip_address_or_range }}
+          EXTRA_OIDS: ${{ inputs.blob_data_contributor_object_ids }}
+        run: |
+          set -euo pipefail
+          {
+            printf 'storage_account_name        = "%s"\n' "${STORAGE_ACCOUNT_NAME}"
+            printf 'location                    = "%s"\n' "${LOCATION}"
+            printf 'allowed_ip_address_or_range = "%s"\n' "${ALLOWED_IP}"
+            if [ -n "${EXTRA_OIDS}" ]; then
+              IDS=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed 's/.*/"&"/' | paste -sd,)
+              printf 'blob_data_contributor_object_ids = [%s]\n' "${IDS}"
+            fi
+          } > ci.auto.tfvars
+          cat ci.auto.tfvars
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -out tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform outputs
+        run: terraform output

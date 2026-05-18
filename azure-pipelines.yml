@@ -1,0 +1,198 @@
+# Deploys the Terraform state storage account using either the Bicep or the
+# Terraform implementation in this repository. Mirrors .github/workflows/deploy.yml.
+#
+# ─── Required Azure DevOps configuration ───────────────────────────────────
+#
+# 1. Create an "Azure Resource Manager" service connection of type
+#    "Workload identity federation (automatic or manual)" that targets the
+#    destination subscription. Pass its name via the `serviceConnection`
+#    parameter when running the pipeline (default: `azure-tfstate`).
+#
+# 2. The service principal backing that connection needs the following Azure
+#    roles on the target subscription:
+#      - Contributor                 (to create the RG and Storage Account)
+#      - User Access Administrator   (to create the role assignment)
+#
+# ─── Notes ─────────────────────────────────────────────────────────────────
+#
+# - The Terraform stage uses local state. Re-running it without preserving the
+#   state file will fail because the resources already exist. For ongoing
+#   management, migrate the state into the storage account this pipeline
+#   creates, or use the Bicep stage which is natively idempotent.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: implementation
+    displayName: Which IaC implementation to deploy
+    type: string
+    default: bicep
+    values:
+      - bicep
+      - terraform
+
+  - name: serviceConnection
+    displayName: Azure Resource Manager service connection (workload identity federation)
+    type: string
+    default: azure-tfstate
+
+  - name: storageAccountName
+    displayName: Globally unique storage account name (3-24 lowercase alphanumeric)
+    type: string
+
+  - name: location
+    displayName: Azure region (e.g. australiaeast)
+    type: string
+    default: australiaeast
+
+  - name: allowedIpAddressOrRange
+    displayName: Optional single IPv4 address or CIDR allowed through the firewall (leave blank to allow none)
+    type: string
+    default: ""
+
+  - name: blobDataContributorObjectIds
+    displayName: Optional comma-separated list of Entra object IDs to grant Storage Blob Data Contributor (deployer is added automatically)
+    type: string
+    default: ""
+
+  - name: terraformVersion
+    displayName: Terraform version (terraform stage only)
+    type: string
+    default: 1.9.8
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Bicep
+    displayName: Deploy via Bicep
+    condition: eq('${{ parameters.implementation }}', 'bicep')
+    jobs:
+      - job: deploy
+        displayName: az deployment sub create
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: Build parameters, what-if and deploy
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                STORAGE_ACCOUNT_NAME="${{ parameters.storageAccountName }}"
+                LOCATION="${{ parameters.location }}"
+                ALLOWED_IP="${{ parameters.allowedIpAddressOrRange }}"
+                EXTRA_OIDS="${{ parameters.blobDataContributorObjectIds }}"
+
+                if [ -n "${EXTRA_OIDS}" ]; then
+                  OIDS_JSON=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | jq -R 'gsub("^[[:space:]]+|[[:space:]]+$"; "")' | jq -s .)
+                else
+                  OIDS_JSON='[]'
+                fi
+
+                jq -n \
+                  --arg sa  "${STORAGE_ACCOUNT_NAME}" \
+                  --arg loc "${LOCATION}" \
+                  --arg ip  "${ALLOWED_IP}" \
+                  --argjson oids "${OIDS_JSON}" \
+                  '{
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                      "storageAccountName":            { "value": $sa  },
+                      "location":                      { "value": $loc },
+                      "allowedIpAddressOrRange":       { "value": $ip  },
+                      "blobDataContributorObjectIds":  { "value": $oids }
+                    }
+                  }' > params.json
+                cat params.json
+
+                echo "::: bicep build :::"
+                az bicep build --file bicep/main.bicep
+
+                DEPLOY_NAME="tfstate-$(Build.BuildId)"
+
+                echo "::: what-if :::"
+                az deployment sub what-if \
+                  --name "${DEPLOY_NAME}" \
+                  --location "${LOCATION}" \
+                  --template-file bicep/main.bicep \
+                  --parameters @params.json
+
+                echo "::: deploy :::"
+                az deployment sub create \
+                  --name "${DEPLOY_NAME}" \
+                  --location "${LOCATION}" \
+                  --template-file bicep/main.bicep \
+                  --parameters @params.json
+
+                echo "::: outputs :::"
+                az deployment sub show \
+                  --name "${DEPLOY_NAME}" \
+                  --query properties.outputs \
+                  --output json
+
+  - stage: Terraform
+    displayName: Deploy via Terraform
+    condition: eq('${{ parameters.implementation }}', 'terraform')
+    jobs:
+      - job: deploy
+        displayName: terraform init / plan / apply
+        steps:
+          - checkout: self
+
+          - bash: |
+              set -euo pipefail
+              TF_VER="${{ parameters.terraformVersion }}"
+              echo "Installing Terraform ${TF_VER}"
+              curl -sSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_amd64.zip" -o /tmp/tf.zip
+              sudo unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
+              terraform version
+            displayName: Install Terraform ${{ parameters.terraformVersion }}
+
+          - task: AzureCLI@2
+            displayName: terraform init / plan / apply
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              workingDirectory: terraform
+              inlineScript: |
+                set -euo pipefail
+
+                # AzureCLI@2 with addSpnToEnvironment: true exposes
+                # servicePrincipalId, tenantId and (for workload identity
+                # federation service connections) idToken.
+                export ARM_CLIENT_ID="${servicePrincipalId}"
+                export ARM_TENANT_ID="${tenantId}"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                export ARM_OIDC_TOKEN="${idToken}"
+                export ARM_USE_OIDC="true"
+
+                STORAGE_ACCOUNT_NAME="${{ parameters.storageAccountName }}"
+                LOCATION="${{ parameters.location }}"
+                ALLOWED_IP="${{ parameters.allowedIpAddressOrRange }}"
+                EXTRA_OIDS="${{ parameters.blobDataContributorObjectIds }}"
+
+                {
+                  printf 'storage_account_name        = "%s"\n' "${STORAGE_ACCOUNT_NAME}"
+                  printf 'location                    = "%s"\n' "${LOCATION}"
+                  printf 'allowed_ip_address_or_range = "%s"\n' "${ALLOWED_IP}"
+                  if [ -n "${EXTRA_OIDS}" ]; then
+                    IDS=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed 's/.*/"&"/' | paste -sd,)
+                    printf 'blob_data_contributor_object_ids = [%s]\n' "${IDS}"
+                  fi
+                } > ci.auto.tfvars
+                cat ci.auto.tfvars
+
+                terraform fmt -check -recursive
+                terraform init -input=false
+                terraform validate
+                terraform plan  -input=false -out tfplan
+                terraform apply -input=false -auto-approve tfplan
+                terraform output
