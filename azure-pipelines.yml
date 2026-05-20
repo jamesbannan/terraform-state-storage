@@ -46,8 +46,8 @@ parameters:
     type: string
     default: australiaeast
 
-  - name: allowedIpAddressOrRange
-    displayName: Optional single IPv4 address or CIDR allowed through the firewall (leave blank to allow none)
+  - name: allowedIpAddressesOrRanges
+    displayName: Optional comma-separated list of IPv4 addresses or CIDR ranges allowed through the firewall (leave blank to allow none)
     type: string
     default: ""
 
@@ -85,19 +85,23 @@ stages:
 
                 STORAGE_ACCOUNT_NAME="${{ parameters.storageAccountName }}"
                 LOCATION="${{ parameters.location }}"
-                ALLOWED_IP="${{ parameters.allowedIpAddressOrRange }}"
+                ALLOWED_IPS="${{ parameters.allowedIpAddressesOrRanges }}"
                 EXTRA_OIDS="${{ parameters.blobDataContributorObjectIds }}"
 
-                if [ -n "${EXTRA_OIDS}" ]; then
-                  OIDS_JSON=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | jq -R 'gsub("^[[:space:]]+|[[:space:]]+$"; "")' | jq -s .)
-                else
-                  OIDS_JSON='[]'
-                fi
+                csv_to_json_array() {
+                  if [ -z "$1" ]; then
+                    echo '[]'
+                  else
+                    printf '%s' "$1" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | jq -R 'gsub("^[[:space:]]+|[[:space:]]+$"; "")' | jq -s .
+                  fi
+                }
+                IPS_JSON=$(csv_to_json_array "${ALLOWED_IPS}")
+                OIDS_JSON=$(csv_to_json_array "${EXTRA_OIDS}")
 
                 jq -n \
                   --arg sa  "${STORAGE_ACCOUNT_NAME}" \
                   --arg loc "${LOCATION}" \
-                  --arg ip  "${ALLOWED_IP}" \
+                  --argjson ips  "${IPS_JSON}" \
                   --argjson oids "${OIDS_JSON}" \
                   '{
                     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
@@ -105,7 +109,7 @@ stages:
                     "parameters": {
                       "storageAccountName":            { "value": $sa  },
                       "location":                      { "value": $loc },
-                      "allowedIpAddressOrRange":       { "value": $ip  },
+                      "allowedIpAddressesOrRanges":    { "value": $ips },
                       "blobDataContributorObjectIds":  { "value": $oids }
                     }
                   }' > params.json
@@ -176,17 +180,23 @@ stages:
 
                 STORAGE_ACCOUNT_NAME="${{ parameters.storageAccountName }}"
                 LOCATION="${{ parameters.location }}"
-                ALLOWED_IP="${{ parameters.allowedIpAddressOrRange }}"
+                ALLOWED_IPS="${{ parameters.allowedIpAddressesOrRanges }}"
                 EXTRA_OIDS="${{ parameters.blobDataContributorObjectIds }}"
 
-                {
-                  printf 'storage_account_name        = "%s"\n' "${STORAGE_ACCOUNT_NAME}"
-                  printf 'location                    = "%s"\n' "${LOCATION}"
-                  printf 'allowed_ip_address_or_range = "%s"\n' "${ALLOWED_IP}"
-                  if [ -n "${EXTRA_OIDS}" ]; then
-                    IDS=$(printf '%s' "${EXTRA_OIDS}" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed 's/.*/"&"/' | paste -sd,)
-                    printf 'blob_data_contributor_object_ids = [%s]\n' "${IDS}"
+                csv_to_hcl_list() {
+                  if [ -z "$1" ]; then
+                    echo '[]'
+                  else
+                    IDS=$(printf '%s' "$1" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed 's/.*/"&"/' | paste -sd,)
+                    printf '[%s]' "${IDS}"
                   fi
+                }
+
+                {
+                  printf 'storage_account_name = "%s"\n' "${STORAGE_ACCOUNT_NAME}"
+                  printf 'location             = "%s"\n' "${LOCATION}"
+                  printf 'allowed_ip_addresses_or_ranges   = %s\n' "$(csv_to_hcl_list "${ALLOWED_IPS}")"
+                  printf 'blob_data_contributor_object_ids = %s\n' "$(csv_to_hcl_list "${EXTRA_OIDS}")"
                 } > ci.auto.tfvars
                 cat ci.auto.tfvars
 

@@ -31,10 +31,10 @@ variable "container_name" {
   default     = "tfstate"
 }
 
-variable "allowed_ip_address_or_range" {
-  description = "Optional. A single public IPv4 address or CIDR range permitted to access the Storage Account data plane. Empty string denies all public IP access (Azure trusted-services bypass still applies)."
-  type        = string
-  default     = ""
+variable "allowed_ip_addresses_or_ranges" {
+  description = "Optional. List of public IPv4 addresses or CIDR ranges permitted to access the Storage Account data plane. Empty list denies all public IP access (Azure trusted-services bypass still applies)."
+  type        = list(string)
+  default     = []
 }
 
 variable "blob_data_contributor_object_ids" {

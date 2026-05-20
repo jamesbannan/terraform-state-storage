@@ -10,7 +10,7 @@ locals {
     var.blob_data_contributor_object_ids,
   ))
 
-  ip_rules = var.allowed_ip_address_or_range == "" ? [] : [var.allowed_ip_address_or_range]
+  ip_rules = var.allowed_ip_addresses_or_ranges
 
   role_assignments = {
     for principal_id in local.blob_data_contributor_principal_ids :

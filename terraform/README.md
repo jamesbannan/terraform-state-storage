@@ -21,7 +21,7 @@ The configuration creates its own resource group, so it has no dependencies on p
   - Shared-key access **disabled** (Entra ID / RBAC only).
   - Public blob access **disabled**, cross-tenant replication **disabled**.
   - Infrastructure encryption **enabled**.
-  - `public_network_access_enabled = true` with `network_rules.default_action = "Deny"` and `bypass = ["AzureServices"]`. An optional single IP or CIDR can be allow-listed.
+  - `public_network_access_enabled = true` with `network_rules.default_action = "Deny"` and `bypass = ["AzureServices"]`. An optional list of IPs/CIDRs can be allow-listed.
   - System-assigned managed identity.
   - Blob versioning, change feed, and 7-day soft delete (blob + container).
   - A private container named `tfstate` (configurable).
@@ -52,7 +52,7 @@ The configuration creates its own resource group, so it has no dependencies on p
 | `subscription_id` | `string` | ⛔ | `null` | Target subscription ID. When `null`, the value is taken from `ARM_SUBSCRIPTION_ID` or the current `az` context. |
 | `resource_group_name` | `string` | ⛔ | `rg-<storage_account_name>` | Name of the resource group to create. |
 | `container_name` | `string` | ⛔ | `tfstate` | Name of the blob container that holds state files. |
-| `allowed_ip_address_or_range` | `string` | ⛔ | `""` | Single public IPv4 address or CIDR allowed through the firewall. Empty = no public IP allowed (Azure trusted-services bypass still applies). |
+| `allowed_ip_addresses_or_ranges` | `list(string)` | ⛔ | `[]` | Public IPv4 addresses or CIDR ranges allowed through the firewall. Empty list = no public IP allowed (Azure trusted-services bypass still applies). |
 | `blob_data_contributor_object_ids` | `list(string)` | ⛔ | `[]` | Additional Entra ID object IDs (users, groups, SPs) granted `Storage Blob Data Contributor`. The identity running Terraform is added automatically. |
 | `tags` | `map(string)` | ⛔ | `{}` | Tags applied to every resource. |
 
@@ -98,7 +98,7 @@ storage_account_name = "sttfstateprd001"
 location             = "australiaeast"
 
 # Optional
-# allowed_ip_address_or_range      = "203.0.113.10"
+# allowed_ip_addresses_or_ranges   = ["203.0.113.10", "198.51.100.0/24"]
 # blob_data_contributor_object_ids = [
 #   "00000000-0000-0000-0000-000000000000",
 # ]
@@ -108,7 +108,7 @@ location             = "australiaeast"
 # }
 ```
 
-> 💡 Find your current public IP for `allowed_ip_address_or_range`: `curl -4 ifconfig.me`
+> 💡 Find your current public IP for `allowed_ip_addresses_or_ranges`: `curl -4 ifconfig.me`
 >
 > 💡 Find an Entra object ID: `az ad signed-in-user show --query id -o tsv` (current user) or `az ad sp show --id <appId> --query id -o tsv` (service principal).
 
@@ -194,7 +194,7 @@ terraform destroy
 |---|---|
 | `StorageAccountAlreadyTaken` | `storage_account_name` must be globally unique across Azure. Choose a different name. |
 | `AuthorizationFailed` on role assignment | Your principal lacks `User Access Administrator` / `Role Based Access Control Administrator` on the subscription. |
-| `403` when running `terraform init` against the new backend | Either the role assignment hasn't propagated yet (wait 1–2 minutes), your client IP isn't in `allowed_ip_address_or_range`, or you forgot `use_azuread_auth = true`. |
-| `PublicAccessNotPermitted` from a CI runner | Add the runner's egress IP to `allowed_ip_address_or_range` and re-apply. |
+| `403` when running `terraform init` against the new backend | Either the role assignment hasn't propagated yet (wait 1–2 minutes), your client IP isn't in `allowed_ip_addresses_or_ranges`, or you forgot `use_azuread_auth = true`. |
+| `PublicAccessNotPermitted` from a CI runner | Add the runner's egress IP to `allowed_ip_addresses_or_ranges` and re-apply. |
 | `Error: building AzureRM Client: please ensure subscription_id is set` | Either set `subscription_id` in `terraform.tfvars` or export `ARM_SUBSCRIPTION_ID`. |
 | `Error retrieving Storage Account ... AuthorizationPermissionMismatch` during apply | The provider needs `storage_use_azuread = true` (already set in `providers.tf`) **and** your principal needs Storage Blob Data Contributor or Owner. The deployment grants this to the deployer automatically; if Terraform fails immediately after creating the account, re-run `terraform apply` to let RBAC propagate. |

@@ -21,8 +21,8 @@ param resourceGroupName string = 'rg-${storageAccountName}'
 @description('Optional. Name of the blob container that will hold Terraform state files.')
 param containerName string = 'tfstate'
 
-@description('Optional. A single public IPv4 address or CIDR range permitted to access the Storage Account data plane. Leave empty to deny all public IP access (Azure trusted-services bypass remains in effect).')
-param allowedIpAddressOrRange string = ''
+@description('Optional. List of public IPv4 addresses or CIDR ranges permitted to access the Storage Account data plane. Leave empty to deny all public IP access (Azure trusted-services bypass remains in effect).')
+param allowedIpAddressesOrRanges array = []
 
 @description('Optional. Additional Entra ID object IDs (users, groups, or service principals) to grant the Storage Blob Data Contributor role. The identity running this deployment is granted the role automatically.')
 param blobDataContributorObjectIds array = []
@@ -41,12 +41,10 @@ var blobDataContributorPrincipalIds = union(
   blobDataContributorObjectIds
 )
 
-var ipRules = empty(allowedIpAddressOrRange) ? [] : [
-  {
-    value: allowedIpAddressOrRange
-    action: 'Allow'
-  }
-]
+var ipRules = [for ipOrRange in allowedIpAddressesOrRanges: {
+  value: ipOrRange
+  action: 'Allow'
+}]
 
 var roleAssignments = [for principalId in blobDataContributorPrincipalIds: {
   principalId: principalId
