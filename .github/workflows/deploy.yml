@@ -205,7 +205,9 @@ jobs:
         run: terraform plan -input=false -out tfplan
 
       - name: Terraform apply
+        if: github.ref == 'refs/heads/main'
         run: terraform apply -input=false -auto-approve tfplan
 
       - name: Terraform outputs
+        if: github.ref == 'refs/heads/main'
         run: terraform output
