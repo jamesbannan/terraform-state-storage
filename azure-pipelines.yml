@@ -198,6 +198,7 @@ stages:
                   printf 'allowed_ip_addresses_or_ranges   = %s\n' "$(csv_to_hcl_list "${ALLOWED_IPS}")"
                   printf 'blob_data_contributor_object_ids = %s\n' "$(csv_to_hcl_list "${EXTRA_OIDS}")"
                 } > ci.auto.tfvars
+                terraform fmt ci.auto.tfvars
                 cat ci.auto.tfvars
 
                 terraform fmt -check -recursive
