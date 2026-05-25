@@ -4,8 +4,8 @@ Deploys a standalone, WAF-aligned Azure Storage Account intended for use as a Te
 
 | Resource | Module | Version |
 |---|---|---|
-| Resource Group | [`Azure/avm-res-resources-resourcegroup/azurerm`](https://registry.terraform.io/modules/Azure/avm-res-resources-resourcegroup/azurerm) | `0.2.1` |
-| Storage Account (+ blob services, container, RBAC) | [`Azure/avm-res-storage-storageaccount/azurerm`](https://registry.terraform.io/modules/Azure/avm-res-storage-storageaccount/azurerm) | `0.6.4` |
+| Resource Group | [`Azure/avm-res-resources-resourcegroup/azurerm`](https://registry.terraform.io/modules/Azure/avm-res-resources-resourcegroup/azurerm) | `0.4.0` |
+| Storage Account (+ container, RBAC) | [`Azure/avm-res-storage-storageaccount/azurerm`](https://registry.terraform.io/modules/Azure/avm-res-storage-storageaccount/azurerm) | `0.7.0` |
 
 The configuration creates its own resource group, so it has no dependencies on pre-existing resources.
 
@@ -33,7 +33,7 @@ The configuration creates its own resource group, so it has no dependencies on p
 
 ## Prerequisites
 
-- **Terraform** `>= 1.9` — <https://developer.hashicorp.com/terraform/install>
+- **Terraform** `>= 1.10` — <https://developer.hashicorp.com/terraform/install>
 - **Azure CLI** `>= 2.60` (used for `az login` and for the `azurerm` provider's default authentication) — <https://learn.microsoft.com/cli/azure/install-azure-cli>
 - Logged in to the target tenant: `az login`
 - Permissions on the target **subscription**:
@@ -122,6 +122,8 @@ terraform init
 
 This downloads the pinned Azure Verified Modules and the required providers (`azurerm`, `azapi`, `random`, `modtm`).
 
+> ℹ️ From v0.7.0, the AVM storage account module uses the `azapi` provider instead of authoring `azurerm_*` resources directly. The `azurerm` provider is still required for `azurerm_client_config`.
+
 ### 5. Validate and format
 
 ```bash
@@ -175,6 +177,8 @@ Then run `terraform init` from your consuming repo. Because shared-key access is
 ## Updating the deployment
 
 Re-run `terraform plan` and `terraform apply` after changing any variable. To rotate or add Entra principals on the container, just update `blob_data_contributor_object_ids` and re-apply.
+
+> ⚠️ **Upgrading from v0.6.x:** The AVM storage account module v0.7.0 was rewritten from `azurerm` to `azapi`. If you previously deployed with v0.6.x and use local state, the existing resources must be deleted before redeploying (the CI/CD pipelines handle this automatically). If you use remote state, you will need to perform state migration (`terraform state rm` + `terraform import`) or destroy and recreate.
 
 ## Deleting the deployment
 
