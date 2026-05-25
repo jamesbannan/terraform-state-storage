@@ -213,7 +213,7 @@ jobs:
           RG_NAME="rg-${STORAGE_ACCOUNT_NAME}"
           if az group exists --name "${RG_NAME}" | grep -q true; then
             echo "Deleting pre-existing resource group '${RG_NAME}' to allow clean redeployment..."
-            az group delete --name "${RG_NAME}" --yes --no-wait false
+            az group delete --name "${RG_NAME}" --yes
           else
             echo "Resource group '${RG_NAME}' does not exist, skipping deletion."
           fi
