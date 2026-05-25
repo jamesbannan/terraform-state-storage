@@ -74,7 +74,8 @@ module "storage_account" {
 
 # Blob service properties (versioning, change feed, soft delete) are no longer
 # exposed by the AVM storage module v0.7.0. Configure directly via azapi.
-resource "azapi_resource" "blob_service" {
+# Use azapi_update_resource because Azure auto-creates blobServices/default.
+resource "azapi_update_resource" "blob_service" {
   type      = "Microsoft.Storage/storageAccounts/blobServices@2024-01-01"
   name      = "default"
   parent_id = module.storage_account.resource_id
