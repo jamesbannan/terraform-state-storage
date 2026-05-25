@@ -59,7 +59,7 @@ parameters:
   - name: terraformVersion
     displayName: Terraform version (terraform stage only)
     type: string
-    default: 1.9.8
+    default: 1.15.4
 
 pool:
   vmImage: ubuntu-latest
@@ -206,6 +206,13 @@ stages:
                 terraform validate
                 terraform plan  -input=false -out tfplan
                 if [ "$(Build.SourceBranch)" = "refs/heads/main" ]; then
+                  RG_NAME="rg-${STORAGE_ACCOUNT_NAME}"
+                  if az group exists --name "${RG_NAME}" | grep -q true; then
+                    echo "Deleting pre-existing resource group '${RG_NAME}' to allow clean redeployment..."
+                    az group delete --name "${RG_NAME}" --yes --no-wait false
+                  else
+                    echo "Resource group '${RG_NAME}' does not exist, skipping deletion."
+                  fi
                   terraform apply -input=false -auto-approve tfplan
                   terraform output
                 else

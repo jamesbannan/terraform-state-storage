@@ -165,7 +165,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.15.4
 
       - name: Build tfvars
         env:
@@ -203,6 +203,20 @@ jobs:
 
       - name: Terraform plan
         run: terraform plan -input=false -out tfplan
+
+      - name: Remove pre-existing resource group
+        if: github.ref == 'refs/heads/main'
+        working-directory: .
+        env:
+          STORAGE_ACCOUNT_NAME: ${{ inputs.storage_account_name }}
+        run: |
+          RG_NAME="rg-${STORAGE_ACCOUNT_NAME}"
+          if az group exists --name "${RG_NAME}" | grep -q true; then
+            echo "Deleting pre-existing resource group '${RG_NAME}' to allow clean redeployment..."
+            az group delete --name "${RG_NAME}" --yes --no-wait false
+          else
+            echo "Resource group '${RG_NAME}' does not exist, skipping deletion."
+          fi
 
       - name: Terraform apply
         if: github.ref == 'refs/heads/main'

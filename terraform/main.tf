@@ -10,7 +10,7 @@ locals {
     var.blob_data_contributor_object_ids,
   ))
 
-  ip_rules = var.allowed_ip_addresses_or_ranges
+  ip_rules = toset(var.allowed_ip_addresses_or_ranges)
 
   role_assignments = {
     for principal_id in local.blob_data_contributor_principal_ids :
@@ -23,25 +23,25 @@ locals {
 
 module "resource_group" {
   source  = "Azure/avm-res-resources-resourcegroup/azurerm"
-  version = "0.2.1"
+  version = "0.4.0"
 
-  name     = local.resource_group_name
-  location = var.location
-  tags     = var.tags
+  name             = local.resource_group_name
+  location         = var.location
+  tags             = var.tags
+  enable_telemetry = false
 }
 
 module "storage_account" {
   source  = "Azure/avm-res-storage-storageaccount/azurerm"
-  version = "0.6.4"
+  version = "0.7.0"
 
-  name                = var.storage_account_name
-  resource_group_name = module.resource_group.name
-  location            = var.location
-  tags                = var.tags
+  name      = var.storage_account_name
+  parent_id = module.resource_group.resource_id
+  location  = var.location
+  tags      = var.tags
 
   account_kind                      = "StorageV2"
-  account_tier                      = "Standard"
-  account_replication_type          = "ZRS"
+  account_sku_name                  = "Standard_ZRS"
   access_tier                       = "Hot"
   min_tls_version                   = "TLS1_2"
   https_traffic_only_enabled        = true
@@ -61,18 +61,6 @@ module "storage_account" {
     system_assigned = true
   }
 
-  blob_properties = {
-    versioning_enabled       = true
-    change_feed_enabled      = true
-    last_access_time_enabled = false
-    delete_retention_policy = {
-      days = 7
-    }
-    container_delete_retention_policy = {
-      days = 7
-    }
-  }
-
   containers = {
     tfstate = {
       name          = var.container_name
@@ -81,4 +69,30 @@ module "storage_account" {
   }
 
   role_assignments = local.role_assignments
+  enable_telemetry = false
+}
+
+# Blob service properties (versioning, change feed, soft delete) are no longer
+# exposed by the AVM storage module v0.7.0. Configure directly via azapi.
+resource "azapi_resource" "blob_service" {
+  type      = "Microsoft.Storage/storageAccounts/blobServices@2024-01-01"
+  name      = "default"
+  parent_id = module.storage_account.resource_id
+
+  body = {
+    properties = {
+      isVersioningEnabled = true
+      changeFeed = {
+        enabled = true
+      }
+      deleteRetentionPolicy = {
+        enabled = true
+        days    = 7
+      }
+      containerDeleteRetentionPolicy = {
+        enabled = true
+        days    = 7
+      }
+    }
+  }
 }
