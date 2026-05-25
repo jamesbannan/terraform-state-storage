@@ -5,7 +5,7 @@ Deploys a standalone, WAF-aligned Azure Storage Account intended for use as a Te
 | Resource | Module | Version |
 |---|---|---|
 | Resource Group | `br/public:avm/res/resources/resource-group` | `0.4.0` |
-| Storage Account (+ blob services, container, RBAC) | `br/public:avm/res/storage/storage-account` | `0.14.3` |
+| Storage Account (+ blob services, container, RBAC) | `br/public:avm/res/storage/storage-account` | `0.32.0` |
 
 The deployment is **subscription-scoped** and creates its own resource group, so it has no dependencies on pre-existing resources.
 

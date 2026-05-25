@@ -36,20 +36,21 @@ param tags object = {}
 
 var deployerObjectId = deployer().objectId
 
-var blobDataContributorPrincipalIds = union(
-  [deployerObjectId],
-  blobDataContributorObjectIds
-)
+var blobDataContributorPrincipalIds = union([deployerObjectId], blobDataContributorObjectIds)
 
-var ipRules = [for ipOrRange in allowedIpAddressesOrRanges: {
-  value: ipOrRange
-  action: 'Allow'
-}]
+var ipRules = [
+  for ipOrRange in allowedIpAddressesOrRanges: {
+    value: ipOrRange
+    action: 'Allow'
+  }
+]
 
-var roleAssignments = [for principalId in blobDataContributorPrincipalIds: {
-  principalId: principalId
-  roleDefinitionIdOrName: 'Storage Blob Data Contributor'
-}]
+var roleAssignments = [
+  for principalId in blobDataContributorPrincipalIds: {
+    principalId: principalId
+    roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+  }
+]
 
 // =========================================================================
 // Resources
@@ -64,7 +65,7 @@ module rg 'br/public:avm/res/resources/resource-group:0.4.0' = {
   }
 }
 
-module storageAccount 'br/public:avm/res/storage/storage-account:0.14.3' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.32.0' = {
   name: 'tfstate-sa-${uniqueString(deployment().name, storageAccountName)}'
   scope: resourceGroup(resourceGroupName)
   dependsOn: [
@@ -135,8 +136,8 @@ output containerName string = containerName
 
 @description('Values consumable by a Terraform `backend "azurerm"` block.')
 output backendConfig object = {
-  resource_group_name:  resourceGroupName
+  resource_group_name: resourceGroupName
   storage_account_name: storageAccount.outputs.name
-  container_name:       containerName
-  use_azuread_auth:     true
+  container_name: containerName
+  use_azuread_auth: true
 }
